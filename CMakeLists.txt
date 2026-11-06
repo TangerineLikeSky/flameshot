@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 # cmake_policy(SET CMP0076 OLD)
 
-set(FLAMESHOT_VERSION 13.3.0)
+set(FLAMESHOT_VERSION 15.0.0)
 
 # Flameshot-org
 set(GIT_API_URL "https://api.github.com/repos/flameshot-org/flameshot/releases/latest")
@@ -20,10 +20,20 @@ set(QT_DEFAULT_MAJOR_VERSION 6 CACHE STRING "")
 set(QT_VERSION_MAJOR 6 CACHE STRING "")
 #BUILD_SHARED_LIBS used by QHotkey and QtColorWidgets
 option(BUILD_SHARED_LIBS OFF)
+#QHOTKEY_INSTALL used by QHotkey; must be disabled on Windows
+if(WIN32)
+set(QHOTKEY_INSTALL OFF CACHE BOOL "qHotkey install")
+endif()
 
 #Needed due to linker error with QtColorWidget
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Control Flow Guard. Both flags are required: /guard:cf instruments the code,
+# /GUARD:CF marks the image. Above add_subdirectory() so vendored targets get it too.
+if(MSVC)
+  add_compile_options(/guard:cf)
+  add_link_options(/GUARD:CF)
+endif()
 
 # Dependency can be fetched via flatpak builder
 if(EXISTS "${CMAKE_SOURCE_DIR}/external/Qt-Color-Widgets/CMakeLists.txt")
@@ -32,7 +42,7 @@ else()
   FetchContent_Declare(
     qtColorWidgets
     GIT_REPOSITORY https://gitlab.com/mattbas/Qt-Color-Widgets.git
-    GIT_TAG 352bc8f99bf2174d5724ee70623427aa31ddc26a
+    GIT_TAG 5d52e907e50dc88cf969b41cea44665ff6c475b1
   )
   #Workaround for duplicate GUID in windows WIX installer
   if(WIN32)
@@ -53,9 +63,9 @@ endif()
 
 
 # Configuration options
-set(DEFAULT_RUN_IN_PLACE FALSE)
+set(DEFAULT_USE_PORTABLE_CONFIG FALSE)
 if(WIN32)
-  set(DEFAULT_RUN_IN_PLACE TRUE)
+  set(DEFAULT_USE_PORTABLE_CONFIG TRUE)
   # For Windows RC file.
   add_definitions(-DFLAMESHOT_VERSION_MAJOR=${CMAKE_PROJECT_VERSION_MAJOR})
   add_definitions(-DFLAMESHOT_VERSION_MINOR=${CMAKE_PROJECT_VERSION_MINOR})
@@ -65,10 +75,12 @@ if(WIN32)
 elseif(APPLE)
   set(Qt6_DIR "$(brew --prefix qt6)/lib/cmake/Qt6/" CACHE PATH "directory where Qt6Config.cmake exists.")
 endif()
-set(RUN_IN_PLACE
-  ${DEFAULT_RUN_IN_PLACE}
-  CACHE BOOL "Run directly in source directory structure")
-
+set(USE_PORTABLE_CONFIG
+  ${DEFAULT_USE_PORTABLE_CONFIG}
+  CACHE BOOL "Store config in application folder")
+if(USE_PORTABLE_CONFIG)
+add_compile_definitions(USE_PORTABLE_CONFIG)
+endif()
 
 option(FLAMESHOT_DEBUG_CAPTURE "Enable mode to make debugging easier" OFF)
 option(USE_MONOCHROME_ICON "Build using monochrome icon as default" OFF)
@@ -106,8 +118,6 @@ include(cmake/CompilerWarnings.cmake)
 include(cmake/Sanitizers.cmake)
 enable_sanitizers(project_options)
 
-# allow for static analysis options include(cmake/StaticAnalyzers.cmake)
-
 if(USE_KDSINGLEAPPLICATION)
   if(USE_BUNDLED_KDSINGLEAPPLICATION)
     set(KDSingleApplication_EXAMPLES OFF CACHE BOOL "Don't build the examples")
@@ -120,7 +130,7 @@ if(USE_KDSINGLEAPPLICATION)
       FetchContent_Declare(
         kdsingleApplication
         GIT_REPOSITORY https://github.com/KDAB/KDSingleApplication.git
-        GIT_TAG v1.2.0
+        GIT_TAG v1.2.1
       )
       FetchContent_MakeAvailable(kdsingleApplication)
     endif()
@@ -129,10 +139,14 @@ if(USE_KDSINGLEAPPLICATION)
   endif()
 endif()
 
+# allow for static analysis options (include after kdsingleApplication because
+# of potential conflict if ENABLE_QT_DEPRECATION_CHECK is used)
+include(cmake/StaticAnalyzers.cmake)
+
 # ToDo: Check if this is used anywhere
 option(BUILD_STATIC_LIBS ON)
 
-if(APPLE)
+if(WIN32 OR APPLE)
   FetchContent_Declare(
     qHotKey
     GIT_REPOSITORY https://github.com/flameshot-org/QHotkey
@@ -158,13 +172,8 @@ if(WIN32)
   # Include all dynamically linked runtime libraries such as MSVCRxxx.dll
   include(InstallRequiredSystemLibraries)
 
-  if(RUN_IN_PLACE)
-    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-      set(CPACK_PACKAGE_FILE_NAME "${PROJECT_NAME}-${PROJECT_VERSION}-win64")
-    else()
-      set(CPACK_PACKAGE_FILE_NAME "${PROJECT_NAME}-${PROJECT_VERSION}-win32")
-    endif()
-
+  if(USE_PORTABLE_CONFIG)
+    set(CPACK_PACKAGE_FILE_NAME "${PROJECT_NAME}-${PROJECT_VERSION}-win64")
     set(CPACK_GENERATOR ZIP)
 
   else()
@@ -189,13 +198,7 @@ if(WIN32)
     set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/packaging/win-installer/LICENSE/GPL-3.0.txt")
     set(CPACK_RESOURCE_FILE_README "${CMAKE_SOURCE_DIR}/README.md")
 
-    # The correct way would be to include both x32 and x64 into one installer and install the appropriate one. CMake
-    # does not support that, so there are two separate GUID's
-    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-      set(CPACK_WIX_UPGRADE_GUID "26D8062A-66D9-48D9-8924-42090FB9B3F9")
-    else()
-      set(CPACK_WIX_UPGRADE_GUID "2C53E1B9-51D9-4429-AAE4-B02221959AA5")
-    endif()
+    set(CPACK_WIX_UPGRADE_GUID "26D8062A-66D9-48D9-8924-42090FB9B3F9")
   endif()
 elseif(APPLE)
   set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY 0)

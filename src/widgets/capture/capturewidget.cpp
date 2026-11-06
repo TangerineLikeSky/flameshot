@@ -10,22 +10,24 @@
 // <http://www.gnu.org/licenses/old-licenses/library.txt>
 
 #include "capturewidget.h"
-#include "abstractlogger.h"
-#include "copytool.h"
-#include "src/config/cacheutils.h"
-#include "src/core/flameshot.h"
-#include "src/core/qguiappcurrentscreen.h"
-#include "src/utils/screengrabber.h"
-#include "src/utils/screenshotsaver.h"
-#include "src/utils/systemnotification.h"
-#include "src/widgets/capture/colorpicker.h"
-#include "src/widgets/capture/hovereventfilter.h"
-#include "src/widgets/capture/modificationcommand.h"
-#include "src/widgets/capture/notifierbox.h"
-#include "src/widgets/capture/overlaymessage.h"
-#include "src/widgets/orientablepushbutton.h"
-#include "src/widgets/panel/sidepanelwidget.h"
-#include "src/widgets/panel/utilitypanel.h"
+#include "config/cacheutils.h"
+#include "config/generalconf.h"
+#include "core/flameshot.h"
+#include "core/qguiappcurrentscreen.h"
+#include "tools/copy/copytool.h"
+#include "utils/abstractlogger.h"
+#include "utils/screengrabber.h"
+#include "utils/screenshotsaver.h"
+#include "widgets/capture/colorpicker.h"
+#include "widgets/capture/hovereventfilter.h"
+#include "widgets/capture/modificationcommand.h"
+#include "widgets/capture/notifierbox.h"
+#include "widgets/capture/overlaymessage.h"
+#include "widgets/draggablewidgetmaker.h"
+#include "widgets/orientablepushbutton.h"
+#include "widgets/panel/sidepanelwidget.h"
+#include "widgets/panel/utilitypanel.h"
+
 #include <QApplication>
 #include <QCheckBox>
 #include <QDateTime>
@@ -35,13 +37,15 @@
 #include <QPainter>
 #include <QScreen>
 #include <QShortcut>
-#include <draggablewidgetmaker.h>
+#include <QWindow>
 
 #if !defined(DISABLE_UPDATE_CHECKER)
-#include "src/widgets/updatenotificationwidget.h"
+#include "widgets/updatenotificationwidget.h"
 #endif
 
 #define MOUSE_DISTANCE_TO_START_MOVING 3
+
+auto const MOUSE_WHEEL_TRESHOLD = 60;
 
 // CaptureWidget is the main component used to capture the screen. It contains
 // an area of selection with its respective buttons.
@@ -101,48 +105,71 @@ CaptureWidget::CaptureWidget(const CaptureRequest& req,
     m_contrastUiColor = m_config.contrastUiColor();
     setMouseTracking(true);
     initContext(fullScreen, req);
+
+    ScreenGrabber grabber;
+    QScreen* selectedScreen = nullptr;
+
 #if (defined(Q_OS_WIN) || defined(Q_OS_MACOS))
     // Top left of the whole set of screens
     QPoint topLeft(0, 0);
 #endif
     if (fullScreen) {
-        // Grab Screenshot
         bool ok = true;
-        m_context.screenshot = ScreenGrabber().grabEntireDesktop(ok);
+        int preSelectedMonitor;
+        if (req.hasSelectedMonitor()) {
+            preSelectedMonitor = req.selectedMonitor();
+        } else {
+            preSelectedMonitor = -1;
+        }
+        m_context.screenshot =
+          grabber.grabEntireDesktop(ok, preSelectedMonitor);
         if (!ok) {
-            AbstractLogger::error() << tr("Unable to capture screen");
+            // Error already logged in ScreenGrabber
             this->close();
         }
         m_context.origScreenshot = m_context.screenshot;
 
+        selectedScreen = grabber.getSelectedScreen();
+
 #if defined(Q_OS_WIN)
-// Call cmake with -DFLAMESHOT_DEBUG_CAPTURE=ON to enable easier debugging
 #if !defined(FLAMESHOT_DEBUG_CAPTURE)
         setWindowFlags(Qt::WindowStaysOnTopHint | Qt::FramelessWindowHint |
                        Qt::SubWindow // Hides the taskbar icon
         );
 #endif
+        // Position the window at the selected screen's position
+        // (or the topLeft of all screens if no specific screen was selected)
+        if (selectedScreen) {
+            move(selectedScreen->geometry().topLeft());
+        } else {
+            for (QScreen* const screen : QGuiApplication::screens()) {
+                QPoint topLeftScreen = screen->geometry().topLeft();
 
-        for (QScreen* const screen : QGuiApplication::screens()) {
-            QPoint topLeftScreen = screen->geometry().topLeft();
-
-            if (topLeftScreen.x() < topLeft.x()) {
-                topLeft.setX(topLeftScreen.x());
+                if (topLeftScreen.x() < topLeft.x()) {
+                    topLeft.setX(topLeftScreen.x());
+                }
+                if (topLeftScreen.y() < topLeft.y()) {
+                    topLeft.setY(topLeftScreen.y());
+                }
             }
-            if (topLeftScreen.y() < topLeft.y()) {
-                topLeft.setY(topLeftScreen.y());
-            }
+            move(topLeft);
         }
-        move(topLeft);
-        resize(pixmap().size());
+        // On Windows, account for DPR when sizing the window
+        QSize windowSize = pixmap().size();
+        if (pixmap().devicePixelRatio() > 1.0) {
+            windowSize = QSize(pixmap().width() / pixmap().devicePixelRatio(),
+                               pixmap().height() / pixmap().devicePixelRatio());
+        }
+        resize(windowSize);
+
+        if (selectedScreen != nullptr && windowHandle()) {
+            windowHandle()->setScreen(selectedScreen);
+        }
 #elif defined(Q_OS_MACOS)
-        // Emulate fullscreen mode
-        //        setWindowFlags(Qt::WindowStaysOnTopHint |
-        //        Qt::BypassWindowManagerHint |
-        //                       Qt::FramelessWindowHint |
-        //                       Qt::NoDropShadowWindowHint | Qt::ToolTip |
-        //                       Qt::Popup
-        //                       );
+        if (!ConfigHandler().useNativeFullscreen()) {
+            setWindowFlags(Qt::WindowStaysOnTopHint | Qt::FramelessWindowHint |
+                           Qt::Tool);
+        }
         QScreen* currentScreen = QGuiAppCurrentScreen().currentScreen();
         move(currentScreen->geometry().x(), currentScreen->geometry().y());
         resize(currentScreen->size());
@@ -150,56 +177,46 @@ CaptureWidget::CaptureWidget(const CaptureRequest& req,
 #else
 // Call cmake with -DFLAMESHOT_DEBUG_CAPTURE=ON to enable easier debugging
 #if !defined(FLAMESHOT_DEBUG_CAPTURE)
-        setWindowFlags(Qt::BypassWindowManagerHint | Qt::WindowStaysOnTopHint |
-                       Qt::FramelessWindowHint | Qt::Tool);
-        // Fix for Qt6 dual monitor offset: position widget to cover entire
-        // desktop
-        QRect desktopGeom = ScreenGrabber().desktopGeometry();
-        move(desktopGeom.topLeft());
-        resize(desktopGeom.size());
-#endif
-        // Need to move to the top left screen
-        QPoint topLeft(0, INT_MAX);
-        for (QScreen* const screen : QGuiApplication::screens()) {
-            qreal dpr = screen->devicePixelRatio();
-            QPoint topLeftScreen = screen->geometry().topLeft() / dpr;
-            if (topLeftScreen.x() == 0) {
-                if (topLeftScreen.y() < topLeft.y()) {
-                    topLeft.setY(topLeftScreen.y());
-                }
-            }
+        if (DesktopInfo().waylandDetected()) {
+            setWindowFlags(Qt::BypassWindowManagerHint |
+                           Qt::WindowStaysOnTopHint | Qt::FramelessWindowHint |
+                           Qt::Tool);
+        } else {
+            // Note: Qt::BypassWindowManagerHint is removed to fix x11 gnome
+            // crash. It's needed on Cosmic
+            setWindowFlags(Qt::WindowStaysOnTopHint | Qt::FramelessWindowHint |
+                           Qt::Tool);
         }
-        move(topLeft);
-#endif
-    }
-    QVector<QRect> areas;
-    if (m_context.fullscreen) {
-        QPoint topLeftOffset = QPoint(0, 0);
-#if defined(Q_OS_WIN)
-        topLeftOffset = topLeft;
 #endif
 
-#if defined(Q_OS_MACOS)
-        // MacOS works just with one active display, so we need to append
-        // just one current display and keep multiple displays logic for
-        // other OS
-        QRect r;
-        QScreen* screen = QGuiAppCurrentScreen().currentScreen();
-        r = screen->geometry();
-        // all calculations are processed according to (0, 0) start
-        // point so we need to move current object to (0, 0)
+        // Always display on the selected screen (not spanning entire desktop)
+        if (selectedScreen == nullptr) {
+            selectedScreen = QGuiApplication::primaryScreen();
+        }
+        QRect screenGeom = selectedScreen->geometry();
+        move(screenGeom.topLeft());
+        resize(screenGeom.size());
+
+        if (selectedScreen != nullptr && windowHandle()) {
+            windowHandle()->setScreen(selectedScreen);
+        }
+        m_selectedScreen = selectedScreen;
+#endif
+    }
+
+    QVector<QRect> areas;
+    if (m_context.fullscreen) {
+        // Always display on a single screen, normalized to (0, 0)
+        QScreen* screenForAreas = selectedScreen;
+        if (!screenForAreas) {
+            screenForAreas = QGuiAppCurrentScreen().currentScreen();
+        }
+        if (!screenForAreas) {
+            screenForAreas = QGuiApplication::primaryScreen();
+        }
+        QRect r = screenForAreas ? screenForAreas->geometry() : QRect();
         r.moveTo(0, 0);
         areas.append(r);
-#else
-        // LINUX & WINDOWS
-        for (QScreen* const screen : QGuiApplication::screens()) {
-            QRect r = screen->geometry();
-            r.moveTo(r.x() / screen->devicePixelRatio(),
-                     r.y() / screen->devicePixelRatio());
-            r.moveTo(r.topLeft() - topLeftOffset);
-            areas.append(r);
-        }
-#endif
     } else {
         areas.append(rect());
     }
@@ -247,7 +264,6 @@ CaptureWidget::CaptureWidget(const CaptureRequest& req,
         updateCursor();
         m_toolSizeByKeyboard = 0;
         onToolSizeChanged(m_context.toolSize);
-        onToolSizeSettled(m_context.toolSize);
     });
 
     m_config.checkAndHandleError();
@@ -269,15 +285,11 @@ CaptureWidget::CaptureWidget(const CaptureRequest& req,
                 OverlayMessage::instance()->update();
             });
 
-    // Qt6 has only sizes in logical values, position is in physical values.
-    // Move Help message to the logical pixel with devicePixelRatio.
-    QScreen* currentScreen = QGuiAppCurrentScreen().currentScreen();
-    QRect currentScreenGeometry = currentScreen->geometry();
-    qreal currentScreenDpr = currentScreen->devicePixelRatio();
-    currentScreenGeometry.moveTo(
-      int(currentScreenGeometry.x() / currentScreenDpr),
-      int(currentScreenGeometry.y() / currentScreenDpr));
-    OverlayMessage::init(this, currentScreenGeometry);
+    // OverlayMessage is a child widget, so use widget-local coordinates
+    // In fullscreen mode, use the normalized area; otherwise use widget rect
+    QRect overlayArea =
+      m_context.fullscreen && !areas.isEmpty() ? areas.first() : rect();
+    OverlayMessage::init(this, overlayArea);
 
     if (m_config.showHelp()) {
         initHelpMessage();
@@ -304,6 +316,11 @@ CaptureWidget::~CaptureWidget()
 #endif
     if (m_captureDone) {
         auto lastRegion = m_selection->geometry();
+        const qreal scale = m_context.screenshot.devicePixelRatio();
+        lastRegion.setTop(lastRegion.top() * scale);
+        lastRegion.setBottom(lastRegion.bottom() * scale);
+        lastRegion.setLeft(lastRegion.left() * scale);
+        lastRegion.setRight(lastRegion.right() * scale);
         setLastRegion(lastRegion);
         QRect geometry(m_context.selection);
         geometry.setTopLeft(geometry.topLeft() + m_context.widgetOffset);
@@ -644,6 +661,9 @@ void CaptureWidget::paintEvent(QPaintEvent* paintEvent)
 {
     Q_UNUSED(paintEvent)
     QPainter painter(this);
+    if (!painter.isActive()) {
+        return;
+    }
     GeneralConf::xywh_position position =
       static_cast<GeneralConf::xywh_position>(m_config.showSelectionGeometry());
     /* QPainter::save and restore is somewhat costly so we try to guess
@@ -816,11 +836,6 @@ bool CaptureWidget::startDrawObjectTool(const QPoint& pos)
 
         m_context.mousePos = m_displayGrid ? snapToGrid(pos) : pos;
         m_activeTool->drawStart(m_context);
-        // TODO this is the wrong place to do this
-
-        if (m_activeTool->type() == CaptureTool::TYPE_CIRCLECOUNT) {
-            m_activeTool->setCount(m_context.circleCount++);
-        }
 
         return true;
     }
@@ -1060,8 +1075,16 @@ void CaptureWidget::setToolSize(int size)
     m_context.toolSize = qBound(1, size, maxToolSize);
     updateTool(activeButtonTool());
 
-    QPoint topLeft =
-      QGuiAppCurrentScreen().currentScreen()->geometry().topLeft();
+    QScreen* topLeftScreen = QGuiAppCurrentScreen().currentScreen();
+    QPoint topLeft(0, 0);
+    if (topLeftScreen) {
+        topLeft = topLeftScreen->geometry().topLeft();
+    } else {
+        QScreen* primary = QGuiApplication::primaryScreen();
+        if (primary) {
+            topLeft = primary->geometry().topLeft();
+        }
+    }
     int offset = m_notifierBox->width() / 4;
     m_notifierBox->move(mapFromGlobal(topLeft) + QPoint(offset, offset));
     m_notifierBox->showMessage(QString::number(m_context.toolSize));
@@ -1119,12 +1142,16 @@ void CaptureWidget::wheelEvent(QWheelEvent* e)
      * not accept events faster that one in 200ms.
      * */
     int toolSizeOffset = 0;
-    if (e->angleDelta().y() >= 60) {
-        // mouse scroll (wheel) increment
-        toolSizeOffset = 1;
-    } else if (e->angleDelta().y() <= -60) {
-        // mouse scroll (wheel) decrement
-        toolSizeOffset = -1;
+    if (qAbs(e->angleDelta().y()) >= MOUSE_WHEEL_TRESHOLD) {
+        auto const delta =
+          qMax(qMin(e->angleDelta().y() / MOUSE_WHEEL_TRESHOLD, 1), -1);
+        if (activeButtonTool() &&
+            activeButtonTool()->handleMouseWheelEvent(
+              delta, m_adjustmentButtonPressed, m_context)) {
+            this->repaint();
+            return;
+        }
+        toolSizeOffset = delta;
     } else {
         // touchpad scroll
         qint64 current = QDateTime::currentMSecsSinceEpoch();
@@ -1157,6 +1184,13 @@ void CaptureWidget::moveEvent(QMoveEvent* e)
 {
     QWidget::moveEvent(e);
     m_context.widgetOffset = mapToGlobal(QPoint(0, 0));
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    // If a compositor moved the window to the wrong screen, move it back
+    if (m_context.fullscreen && m_selectedScreen &&
+        geometry().topLeft() != m_selectedScreen->geometry().topLeft()) {
+        move(m_selectedScreen->geometry().topLeft());
+    }
+#endif
 }
 
 void CaptureWidget::changeEvent(QEvent* e)
@@ -1183,22 +1217,10 @@ void CaptureWidget::initContext(bool fullscreen, const CaptureRequest& req)
 
 void CaptureWidget::initPanel()
 {
+    // Use widget-local coordinates (rect()) for all child widgets
+    // Child widgets use parent-relative coordinate system, not global screen
+    // coords
     QRect panelRect = rect();
-    if (m_context.fullscreen) {
-#if (defined(Q_OS_MACOS) || defined(Q_OS_LINUX))
-        QScreen* currentScreen = QGuiAppCurrentScreen().currentScreen();
-        panelRect = currentScreen->geometry();
-        auto devicePixelRatio = currentScreen->devicePixelRatio();
-        panelRect.moveTo(static_cast<int>(panelRect.x() / devicePixelRatio),
-                         static_cast<int>(panelRect.y() / devicePixelRatio));
-#else
-        panelRect = QGuiApplication::primaryScreen()->geometry();
-        auto devicePixelRatio =
-          QGuiApplication::primaryScreen()->devicePixelRatio();
-        panelRect.moveTo(panelRect.x() / devicePixelRatio,
-                         panelRect.y() / devicePixelRatio);
-#endif
-    }
 
     if (ConfigHandler().showSidePanelButton()) {
         auto* panelToggleButton =
@@ -1213,6 +1235,8 @@ void CaptureWidget::initPanel()
           static_cast<int>(panelRect.height() / 2) -
             static_cast<int>(panelToggleButton->width() / 2));
 #else
+        // panelRect is already adjusted for DPR, so centering calculations work
+        // correctly
         panelToggleButton->move(panelRect.x(),
                                 panelRect.y() + panelRect.height() / 2 -
                                   panelToggleButton->width() / 2);
@@ -1229,12 +1253,10 @@ void CaptureWidget::initPanel()
     m_panel->hide();
     makeChild(m_panel);
 #if defined(Q_OS_MACOS)
-    QScreen* currentScreen = QGuiAppCurrentScreen().currentScreen();
-    panelRect.moveTo(mapFromGlobal(panelRect.topLeft()));
     m_panel->setFixedWidth(static_cast<int>(m_colorPicker->width() * 1.5));
-    m_panel->setFixedHeight(currentScreen->geometry().height());
+    m_panel->setFixedHeight(height());
 #else
-    panelRect.moveTo(mapFromGlobal(panelRect.topLeft()));
+    // Panel uses widget-local coordinates (parent-relative)
     panelRect.setWidth(m_colorPicker->width() * 1.5);
     m_panel->setGeometry(panelRect);
 #endif
@@ -1360,8 +1382,6 @@ void CaptureWidget::initSelection()
     });
     if (!initialSelection.isNull()) {
         const qreal scale = m_context.screenshot.devicePixelRatio();
-        initialSelection.moveTopLeft(initialSelection.topLeft() -
-                                     mapToGlobal(QPoint(0, 0)));
         initialSelection.setTop(initialSelection.top() / scale);
         initialSelection.setBottom(initialSelection.bottom() / scale);
         initialSelection.setLeft(initialSelection.left() / scale);
@@ -1481,6 +1501,18 @@ void CaptureWidget::handleToolSignal(CaptureTool::Request r)
         case CaptureTool::REQ_DECREASE_TOOL_SIZE:
             setToolSize(m_context.toolSize - 1);
             break;
+        case CaptureTool::REQ_COMMIT_CURRENT_TOOL: {
+            const bool editingExistingTool =
+              m_activeTool && m_activeTool->editMode();
+            if (commitCurrentTool()) {
+                if (editingExistingTool) {
+                    m_panel->setToolWidget(nullptr);
+                }
+                drawToolsData();
+                updateLayersPanel();
+            }
+            break;
+        }
         default:
             break;
     }
@@ -1495,6 +1527,14 @@ void CaptureWidget::onToolSizeChanged(int t)
 {
 
     m_context.toolSize = t;
+
+    // Persist the new size straight away. This was previously deferred until
+    // the NotifierBox finished hiding, which meant a size set from the side
+    // panel was never saved at all, since that path never shows the notifier,
+    // and a size set with the wheel or the keyboard was lost whenever the
+    // capture was completed before the notifier's timeout had elapsed.
+    m_config.setToolSize(activeButtonToolType(), t);
+
     CaptureTool* tool = activeButtonTool();
     if (tool && tool->showMousePreview()) {
         setCursor(Qt::BlankCursor);
@@ -1521,11 +1561,6 @@ void CaptureWidget::onToolSizeChanged(int t)
 
     // Force a repaint to prevent artifacting
     this->repaint();
-}
-
-void CaptureWidget::onToolSizeSettled(int size)
-{
-    m_config.setToolSize(activeButtonToolType(), size);
 }
 
 void CaptureWidget::setDrawColor(const QColor& c)

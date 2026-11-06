@@ -4,6 +4,7 @@
 #pragma once
 
 #include <QDialog>
+#include <QTimer>
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -21,11 +22,15 @@ public:
 
 private:
     Ui::CaptureLauncher* ui;
+    QTimer* m_countdownTimer;
+    int m_remainingSeconds;
     void connectCaptureSlots() const;
     void disconnectCaptureSlots() const;
+    void updateCountdown();
 
 private slots:
     void startCapture();
+    void loadLastRegion();
     void onCaptureTaken(QPixmap const& p);
     void onCaptureFailed();
 };

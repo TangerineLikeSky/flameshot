@@ -11,15 +11,15 @@
 
 #pragma once
 
-#include "buttonhandler.h"
-#include "capturetoolbutton.h"
-#include "capturetoolobjects.h"
-#include "src/config/generalconf.h"
-#include "src/tools/capturecontext.h"
-#include "src/tools/capturetool.h"
-#include "src/utils/confighandler.h"
-#include "src/widgets/capture/magnifierwidget.h"
-#include "src/widgets/capture/selectionwidget.h"
+#include "tools/capturecontext.h"
+#include "tools/capturetool.h"
+#include "utils/confighandler.h"
+#include "widgets/capture/buttonhandler.h"
+#include "widgets/capture/capturetoolbutton.h"
+#include "widgets/capture/capturetoolobjects.h"
+#include "widgets/capture/magnifierwidget.h"
+#include "widgets/capture/selectionwidget.h"
+
 #include <QMessageBox>
 #include <QPointer>
 #include <QTimer>
@@ -30,6 +30,7 @@ class QLabel;
 class QPaintEvent;
 class QResizeEvent;
 class QMouseEvent;
+class QScreen;
 class QShortcut;
 class QNetworkAccessManager;
 class QNetworkReply;
@@ -83,7 +84,6 @@ private slots:
     void handleButtonRightClick(CaptureToolButton* b);
     void setDrawColor(const QColor& c);
     void onToolSizeChanged(int size);
-    void onToolSizeSettled(int size);
     void updateActiveLayer(int layer);
     void onMoveCaptureToolUp(int captureToolIndex);
     void onMoveCaptureToolDown(int captureToolIndex);
@@ -163,6 +163,7 @@ private:
 
     // Context information
     CaptureContext m_context;
+    QScreen* m_selectedScreen = nullptr;
 
     // Main ui color
     QColor m_uiColor;

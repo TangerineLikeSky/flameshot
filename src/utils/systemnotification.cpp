@@ -1,17 +1,16 @@
 #include "systemnotification.h"
-#include "src/core/flameshot.h"
-#include "src/utils/abstractlogger.h"
-#include "src/utils/confighandler.h"
+#include "utils/abstractlogger.h"
+#include "utils/confighandler.h"
+
 #include <QApplication>
 #include <QUrl>
-
 #if !(defined(Q_OS_MACOS) || defined(Q_OS_WIN))
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
 #include <QDBusInterface>
 #include <QDBusMessage>
 #else
-#include "src/core/flameshotdaemon.h"
+#include "core/flameshotdaemon.h"
 #endif
 
 // work-around for snap, which cannot install icons into
@@ -91,8 +90,16 @@ void SystemNotification::sendMessage(const QString& text,
              << QStringList()                // actions
              << hintsMap                     // hints
              << timeout;                     // timeout
-        m_interface->callWithArgumentList(
-          QDBus::AutoDetect, QStringLiteral("Notify"), args);
+        // Fire-and-forget: an asynchronous call never blocks the event loop,
+        // even when no notification daemon is registered on the session bus
+        // (e.g. bare startx / tiling WM sessions). The previous synchronous
+        // callWithArgumentList stalled the main thread for the QtDBus reply
+        // timeout (~25s) after every capture, freezing further captures until
+        // it returned.
+        if (m_interface != nullptr) {
+            m_interface->asyncCallWithArgumentList(QStringLiteral("Notify"),
+                                                   args);
+        }
     }
 #endif
 }

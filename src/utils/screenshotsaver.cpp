@@ -2,13 +2,12 @@
 // SPDX-FileCopyrightText: 2017-2019 Alejandro Sirgo Rica & Contributors
 
 #include "screenshotsaver.h"
-#include "abstractlogger.h"
-#include "src/core/flameshot.h"
-#include "src/core/flameshotdaemon.h"
-#include "src/utils/confighandler.h"
-#include "src/utils/filenamehandler.h"
-#include "src/utils/globalvalues.h"
+#include "core/flameshotdaemon.h"
+#include "utils/abstractlogger.h"
+#include "utils/confighandler.h"
 #include "utils/desktopinfo.h"
+#include "utils/filenamehandler.h"
+#include "utils/globalvalues.h"
 
 #include <QByteArray>
 #include <QDebug>
@@ -34,7 +33,66 @@
 #include <qimagewriter.h>
 #include <qmimedatabase.h>
 #if defined(Q_OS_MACOS)
-#include "src/widgets/capture/capturewidget.h"
+#include "widgets/capture/capturewidget.h"
+#include <QUtiMimeConverter>
+
+namespace {
+// Qt has no native pasteboard mapping for image/png or image/jpeg, so it
+// publishes them under com.trolltech.anymime.*, which only Qt apps can read.
+// This converter exposes the encoded bytes as public.png / public.jpeg.
+class EncodedImageUtiConverter : public QUtiMimeConverter
+{
+public:
+    QString utiForMime(const QString& mime) const override
+    {
+        if (mime == QLatin1String("image/png")) {
+            return QStringLiteral("public.png");
+        }
+        if (mime == QLatin1String("image/jpeg")) {
+            return QStringLiteral("public.jpeg");
+        }
+        return {};
+    }
+
+    QString mimeForUti(const QString& uti) const override
+    {
+        if (uti == QLatin1String("public.png")) {
+            return QStringLiteral("image/png");
+        }
+        if (uti == QLatin1String("public.jpeg")) {
+            return QStringLiteral("image/jpeg");
+        }
+        return {};
+    }
+
+    QList<QByteArray> convertFromMime(const QString& mime,
+                                      const QVariant& data,
+                                      const QString& uti) const override
+    {
+        if (!canConvert(mime, uti)) {
+            return {};
+        }
+        return { data.toByteArray() };
+    }
+
+    QVariant convertToMime(const QString& mime,
+                           const QList<QByteArray>& data,
+                           const QString& uti) const override
+    {
+        if (!canConvert(mime, uti) || data.isEmpty()) {
+            return {};
+        }
+        return data.first();
+    }
+};
+
+// Converters must be created after QGuiApplication; the instance registers
+// itself globally and lives for the rest of the process.
+void ensureEncodedImageUtiConverter()
+{
+    static EncodedImageUtiConverter converter;
+}
+} // namespace
 #endif
 
 bool saveToFilesystem(const QPixmap& capture,
@@ -105,50 +163,39 @@ QString ShowSaveFileDialog(const QString& title, const QString& directory)
       QMimeDatabase().mimeTypeForFile("image." + suffix).name();
     dialog.selectMimeTypeFilter(defaultMimeType);
     dialog.setDefaultSuffix(suffix);
+    // Follow the format picked in the file type dropdown: use its suffix
+    // when the typed name has none, and swap the extension of a name that
+    // already has one (the Qt dialog does this itself, GTK's does not).
+    QObject::connect(&dialog,
+                     &QFileDialog::filterSelected,
+                     &dialog,
+                     [&dialog](const QString&) {
+                         QString newSuffix =
+                           QMimeDatabase()
+                             .mimeTypeForName(dialog.selectedMimeTypeFilter())
+                             .preferredSuffix();
+                         if (newSuffix.isEmpty()) {
+                             return;
+                         }
+                         dialog.setDefaultSuffix(newSuffix);
+                         QStringList files = dialog.selectedFiles();
+                         if (files.isEmpty()) {
+                             return;
+                         }
+                         QFileInfo info(files.constFirst());
+                         QString oldSuffix = info.suffix().toLower();
+                         if (oldSuffix != newSuffix &&
+                             QImageWriter::supportedImageFormats().contains(
+                               oldSuffix.toLatin1())) {
+                             dialog.selectFile(info.dir().filePath(
+                               info.completeBaseName() + "." + newSuffix));
+                         }
+                     });
     if (dialog.exec() == QDialog::Accepted) {
         return dialog.selectedFiles().constFirst();
     } else {
         return {};
     }
-}
-
-void saveJpegToClipboardMacOS(const QPixmap& capture)
-{
-    // Convert QPixmap to JPEG data
-    QByteArray jpegData;
-    QBuffer buffer(&jpegData);
-    buffer.open(QIODevice::WriteOnly);
-
-    QImageWriter imageWriter(&buffer, "jpeg");
-
-    // Set JPEG quality to whatever is in settings
-    imageWriter.setQuality(ConfigHandler().jpegQuality());
-    if (!imageWriter.write(capture.toImage())) {
-        qWarning() << "Failed to write image to JPEG format.";
-        return;
-    }
-
-    // Save JPEG data to a temporary file
-    QTemporaryFile tempFile;
-    if (!tempFile.open()) {
-        qWarning() << "Failed to open temporary file for writing.";
-        return;
-    }
-    tempFile.write(jpegData);
-    tempFile.close();
-
-    // Use osascript to copy the contents of the file to clipboard
-    QProcess process;
-    QString script =
-      QString("set the clipboard to (read (POSIX file \"%1\") as «class PNGf»)")
-        .arg(tempFile.fileName());
-    process.start("osascript", QStringList() << "-e" << script);
-    if (!process.waitForFinished()) {
-        qWarning() << "Failed to execute AppleScript.";
-    }
-
-    // Clean up
-    tempFile.remove();
 }
 
 void saveToClipboardMime(const QPixmap& capture, const QString& imageType)
@@ -170,12 +217,25 @@ void saveToClipboardMime(const QPixmap& capture, const QString& imageType)
 
         auto* mimeData = new QMimeData();
 
-#ifdef USE_WAYLAND_CLIPBOARD
+#if defined(Q_OS_MACOS)
+        // Publish the encoded bytes first (as public.png / public.jpeg) so
+        // apps pick them over TIFF, then setImageData for a public.tiff
+        // fallback that macOS can always access.
+        ensureEncodedImageUtiConverter();
+        mimeData->setData("image/" + imageType, array);
         mimeData->setImageData(formattedPixmap.toImage());
-        mimeData->setData(QStringLiteral("x-kde-force-image-copy"),
-                          QByteArray());
-        KSystemClipboard::instance()->setMimeData(mimeData,
-                                                  QClipboard::Clipboard);
+        QApplication::clipboard()->setMimeData(mimeData);
+#elif defined(USE_WAYLAND_CLIPBOARD)
+        if (QGuiApplication::platformName() == "wayland") {
+            mimeData->setImageData(formattedPixmap.toImage());
+            mimeData->setData(QStringLiteral("x-kde-force-image-copy"),
+                              QByteArray());
+            KSystemClipboard::instance()->setMimeData(mimeData,
+                                                      QClipboard::Clipboard);
+        } else {
+            mimeData->setData("image/" + imageType, array);
+            QApplication::clipboard()->setMimeData(mimeData);
+        }
 #else
         mimeData->setData("image/" + imageType, array);
         QApplication::clipboard()->setMimeData(mimeData);
@@ -201,15 +261,16 @@ void saveToClipboard(const QPixmap& capture)
     } else {
         AbstractLogger() << QObject::tr("Capture saved to clipboard.");
     }
-    if (ConfigHandler().useJpgForClipboard()) {
-#ifdef Q_OS_MAC
-        saveJpegToClipboardMacOS(capture);
+#if defined(Q_OS_MACOS)
+    // On macOS, setPixmap uses lazy clipboard which fails when the
+    // process exits ("Cannot keep promise"). Always use serialized bytes.
+    saveToClipboardMime(capture,
+                        ConfigHandler().useJpgForClipboard() ? "jpeg" : "png");
 #else
+    if (ConfigHandler().useJpgForClipboard()) {
         saveToClipboardMime(capture, "jpeg");
-#endif
     } else {
-        // Need to send message before copying to clipboard
-#if defined(Q_OS_LINUX) || defined(Q_OS_UNIX)
+#if defined(Q_OS_UNIX)
         if (DesktopInfo().waylandDetected()) {
             saveToClipboardMime(capture, "png");
         } else {
@@ -219,6 +280,7 @@ void saveToClipboard(const QPixmap& capture)
         QApplication::clipboard()->setPixmap(capture);
 #endif
     }
+#endif
 }
 
 class ClipboardWatcherMimeData : public QMimeData

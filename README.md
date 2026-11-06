@@ -57,13 +57,16 @@
 
 - [Features](#features)
 - [Usage](#usage)
+  - [Usage on Windows](#usage-on-windows)
+  - [Usage on Hyprland / Sway / wlroots](#usage-on-hyprland--sway--wlroots)
+  - [Usage on minimal X11 window managers](#usage-on-minimal-x11-window-managers)
   - [CLI configuration](#cli-configuration)
   - [Config file](#config-file)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
   - [Local](#local)
   - [Global](#global)
     - [On KDE Plasma desktop](#on-kde-plasma-desktop)
-    - [On Ubuntu](#on-ubuntu-tested-on-2204)
+    - [On Gnome (Ubuntu, Fedora and more)](#on-gnome-ubuntu-fedora-and-more)
     - [On XFCE 4](#on-xfce-4)
     - [On Fluxbox](#on-fluxbox)
 - [Considerations](#considerations)
@@ -161,6 +164,14 @@ running `flameshot.exe -h`.
 
 If you require console output, run `flameshot-cli.exe` instead. `flameshot-cli.exe` is a minimal wrapper around `flameshot.exe` that ensures all stdout is captured and output to the console.
 
+### Usage on Hyprland / Sway / wlroots
+
+Please [refer to this document](docs/UsageHyprlandSwayWlroots.md) for detailed instructions on how to set up Flameshot on Hyprland, Sway, and wlroots-based Wayland compositors.
+
+### Usage on minimal X11 window managers
+
+On minimal X11 window managers (i3, dwm, xmonad, bspwm, ...), capturing may fail because no portal backend implements the Screenshot interface (errors such as *"Could not locate the org.freedesktop.portal.Desktop service"* or *"Screenshot portal timed out"*). Please [refer to this document](docs/UsageX11MinimalWM.md) for the fix (enabling the legacy X11 capture).
+
 ### CLI configuration
 
 You can use the graphical menu to configure Flameshot, but alternatively you can use your terminal or scripts to do so.
@@ -237,13 +248,13 @@ These shortcuts are available in GUI mode:
 
 ### Global
 
-Flameshot uses <kbd>Print screen</kbd> (Windows) and <kbd>cmd</kbd>-<kbd>shift</kbd>-<kbd>x</kbd> (macOS) as default global hotkeys.
-
-On Linux, Flameshot doesn't yet support <kbd>Prt Sc</kbd> out of the box, but with a bit of configuration you can set this up:
+- Windows: <kbd>Prt Sc</kbd> (fixed, cannot be changed) and <kbd>Win</kbd> + <kbd>Shift</kbd> + <kbd>X</kbd> (can be changed in the settings)
+- macOS: <kbd>cmd</kbd> + <kbd>Shift</kbd> + <kbd>X</kbd> (can be changed in the settings)
+- Linux: Flameshot doesn't yet support <kbd>Prt Sc</kbd> out of the box, but you can set this up with a bit of configuration:
 
 #### On KDE Plasma desktop
 
-To make configuration easier, there's a [file](docs/shortcuts-config/flameshot-shortcuts-kde.khotkeys) in the repository that more or less automates this process. This file will assign the following hotkeys by default:
+To make configuration easier, there's a [file](docs/shortcuts-config/flameshot-shortcuts-kde.kksrc) in the repository that more or less automates this process. This file will assign the following hotkeys by default:
 
 |  Keys                                                  |  Description                                                                       |
 |---                                                     |---                                                                                 |
@@ -281,19 +292,19 @@ Steps for using the configuration:
     ln -s /var/lib/flatpak/exports/bin/org.flameshot.Flameshot ~/.local/bin/flameshot
     ```
 
-#### On Ubuntu (Tested 22.04)
+#### On Gnome (Ubuntu, Fedora and more)
 
-To use Flameshot instead of the default screenshot application in Ubuntu we need to remove the binding on <kbd>Prt Sc</kbd> key, and then create a new binding for `/usr/bin/flameshot gui` ([adapted](https://askubuntu.com/posts/1039949/revisions) from [Pavel's answer on AskUbuntu](https://askubuntu.com/revisions/1036473/1)).
+To use Flameshot instead of the default screenshot application in Gnome we need to remove the binding on <kbd>Prt Sc</kbd> key, and then create a new binding for `flameshot gui` ([adapted](https://askubuntu.com/posts/1039949/revisions) from [Pavel's answer on AskUbuntu](https://askubuntu.com/revisions/1036473/1)).
 
 1. Remove the binding on <kbd>Prt Sc</kbd>:
   
-   Ubuntu 22.04: Go to _Settings_ > _Keyboard_ > _View and Customise Shortcuts_ > _Screenshots_ > _Take a screenshot interactively_ and press `backspace`
+   Go to _Settings_ > _Keyboard_ > _View and Customise Shortcuts_ > _Screenshots_ > _Take a screenshot interactively_ and press `backspace`
 
 2. Add custom binding on <kbd>Prt Sc</kbd>:
   
-   Ubuntu 22.04: Go to _Settings_ > _Keyboard_ > _View and Customise Shortcuts_ > _Custom shortcuts_ and press the '+' button at the bottom.
+   Go to _Settings_ > _Keyboard_ > _View and Customise Shortcuts_ > _Custom shortcuts_ and press the '+' button at the bottom.
 
-3. Name the command as you like it, e.g. `flameshot`. And in the command insert `/usr/bin/flameshot gui`.
+3. Name the command as you like it, e.g. `flameshot`. And in the command insert `/usr/bin/flameshot gui` or `flatpak run org.flameshot.Flameshot gui` if installed via flatpak.
 
 4. Then click "_Set Shortcut.._" and press <kbd>Prt Sc</kbd>. This will show as "_print_".
 
@@ -331,7 +342,7 @@ Now every time you press <kbd>Prt Sc</kbd> it will start Flameshot GUI instead o
 
 - Press <kbd>Enter</kbd> or <kbd>Ctrl</kbd> + <kbd>C</kbd> when you are in a capture mode and you don't have an active selection and the whole desktop will be copied to your clipboard. Pressing <kbd>Ctrl</kbd> + <kbd>S</kbd> will save your capture to a file. Check the [Shortcuts](#keyboard-shortcuts) for more information.
 
-- Flameshot works best with a desktop environment that includes D-Bus. See this [article](https://wiki.archlinux.org/index.php/Flameshot#Troubleshooting) for tips on using Flameshot in a minimal window manager (dwm, i3, xmonad, etc).
+- Flameshot works best with a desktop environment that includes D-Bus. See this [article](https://wiki.archlinux.org/title/Flameshot#Troubleshooting) for tips on using Flameshot in a minimal window manager (dwm, i3, xmonad, etc).
 
 - In order to speed up the first launch of Flameshot (D-Bus init of the app can be slow), consider starting the application automatically on boot.
     - Quick tip: If you don't have Flameshot to autostart at boot and you want to set keyboard shortcut, use the following as the command for the keybinding:
@@ -356,20 +367,27 @@ There are packages available in the repository of some Linux distributions:
 - [Debian 10+](https://tracker.debian.org/pkg/flameshot): `apt install flameshot`
   + Package for Debian 9 ("Stretch") also [available via stretch-backports](https://backports.debian.org/).
 - [Ubuntu](https://launchpad.net/ubuntu/+source/flameshot): `apt install flameshot`
+  + A [PPA supporting Ubuntu 22.04 and newer](https://launchpad.net/~quentiumyt/+archive/ubuntu/flameshot) is provided by
+[Quentin Lienhardt](https://github.com/QuentiumYT) that offers an up-to-date version of `flameshot`.
 - [openSUSE](https://software.opensuse.org/package/flameshot): `zypper install flameshot`
 - [Void Linux](https://github.com/void-linux/void-packages/tree/master/srcpkgs/flameshot): `xbps-install flameshot`
 - [Solus](https://dev.getsol.us/source/flameshot/): `eopkg it flameshot`
 - [Fedora](https://src.fedoraproject.org/rpms/flameshot): `dnf install flameshot`
 - [NixOS](https://search.nixos.org/packages?query=flameshot): `nix-env -iA nixos.flameshot`
 - [ALT](https://packages.altlinux.org/en/sisyphus/srpms/flameshot/): `su - -c "apt-get install flameshot"`
-- [Snap/Flatpak/AppImage](https://github.com/flameshotapp/packages)
+- [Snap/Flatpak/AppImage](https://github.com/flameshot-org/packages)
 - [Docker](https://github.com/ManuelLR/docker-flameshot)
 - [Windows](https://github.com/majkinetor/au-packages/tree/master/flameshot)
 
 ### macOS
 
 - [MacPorts](https://www.macports.org): `sudo port selfupdate && sudo port install flameshot`
-- [Homebrew](https://brew.sh): `brew install --cask flameshot`
+- Homebrew:
+```
+brew tap flameshot-org/flameshot
+brew trust --cask flameshot-org/flameshot/flameshot-org-flameshot
+brew install  flameshot-org-flameshot
+```
 
 **Note** that because of macOS security features, you may not be able to open flameshot when installed using brew.
 If you see the message `“flameshot” cannot be opened because the developer cannot be verified.` you will need to
@@ -386,7 +404,7 @@ After following all those steps above, `flameshot` will open without problems in
 
 ### Windows
 
-- [Chocolatey](https://chocolatey.org/packages/flameshot)
+- [Scoop](https://github.com/ScoopInstaller/Extras/blob/master/bucket/flameshot.json): `scoop install flameshot`
 
 <details>
   <summary>Expand this section to see what distros are using an up to date version of flameshot</summary>
@@ -397,7 +415,7 @@ After following all those steps above, `flameshot` will open without problems in
 
 ### Tray icon
 
-**Note** that for the Flameshot icon to appear in your tray area, you should have a systray software installed. This is especially true for users who use minimal [window managers](https://wiki.archlinux.org/index.php/window_manager) such as [dwm](https://dwm.suckless.org/). In some [Desktop Environment](https://wiki.archlinux.org/index.php/Desktop_environment) installations (e.g Gnome), the systray might be missing and you can install an application or plugin (e.g [Gnome shell extension](https://extensions.gnome.org/extension/1503/tray-icons/)) to add the systray to your setup. It has been [reported](https://github.com/flameshot-org/flameshot/issues/1009#issuecomment-700781081)) that icon of some software, including Flameshot, does not show in [gnome-shell-extension-appindicator](https://github.com/ubuntu/gnome-shell-extension-appindicator).
+**Note** that for the Flameshot icon to appear in your tray area, you should have a systray software installed. This is especially true for users who use minimal [window managers](https://wiki.archlinux.org/title/window_manager) such as [dwm](https://dwm.suckless.org/). In some [Desktop Environment](https://wiki.archlinux.org/title/Desktop_environment) installations (e.g Gnome), the systray might be missing and you can install an application or plugin (e.g [Gnome shell extension](https://extensions.gnome.org/extension/1503/tray-icons/)) to add the systray to your setup. It has been [reported](https://github.com/flameshot-org/flameshot/issues/1009#issuecomment-700781081)) that icon of some software, including Flameshot, does not show in [gnome-shell-extension-appindicator](https://github.com/ubuntu/gnome-shell-extension-appindicator).
 
 
 Alternatively, in case you don't want to have a systray, you can always call Flameshot from the terminal. See [Usage section](#usage).
@@ -557,7 +575,7 @@ cmake --install "$BUILD_DIR"
 
 ## License
 
-- The main code is licensed under [GPLv3](LICENSE)
+- The main code is licensed under [GPLv3+](LICENSE)
 - The logo of Flameshot is licensed under [Free Art License v1.3](data/img/app/flameshotLogoLicense.txt)
 - The button icons are licensed under Apache License 2.0. See: https://github.com/google/material-design-icons
 - The code at capture/capturewidget.cpp is based on https://github.com/ckaiser/Lightscreen/blob/master/dialogs/areadialog.cpp (GPLv2)
@@ -565,7 +583,7 @@ cmake --install "$BUILD_DIR"
 - I copied a few lines of code from KSnapshot regiongrabber.cpp revision `796531` (LGPL)
 - Qt-Color-Widgets taken and modified from https://github.com/mbasaglia/Qt-Color-Widgets (see their license and exceptions in the project) (LGPL/GPL)
 
-Info: If I take code from your project and that implies a relicense to GPLv3, you can reuse my changes with the original previous license of your project applied.
+Info: If I take code from your project and that implies a relicense to GPLv3+, you can reuse my changes with the original previous license of your project applied.
 
 ## Privacy Policy
 
